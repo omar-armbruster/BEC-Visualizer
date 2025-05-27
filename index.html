@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <title>Gas Simulation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.8.1/gl-matrix-min.js"></script>
+  </head>
+
+  <body>
+    <div style="width: 100%; position: relative">
+      <canvas id="animation-canvas" style="width: inherit"></canvas>
+    </div>
+    <img id="particle" src="particle.png" hidden />
+    <script type="text/javascript">
+      class Ray {
+        /**
+         * Saves the origin and direction of the ray.
+         * @param {vec3} origin.
+         * @param {vec3} direction.
+         */
+        constructor(origin, direction) {
+          this.origin = origin;
+          this.direction = vec3.normalize(vec3.create(), direction);
+        }
+
+        /**
+         * Evaluates a point along the ray.
+         * @param {Number} t
+         * @returns {vec3} point = origin + t * direction
+         */
+        evaluate(t) {
+          return vec3.scaleAndAdd(vec3.create(), this.origin, this.direction, t);
+        }
+      }
+      window.onload = () => {
+        // create particles
+        const dim = 3;
+        const nParticles = 50;
+        let position = new Float32Array(dim * nParticles);
+        for (let i = 0; i < nParticles * dim; i++) {
+          if(i%3 === 2){
+            position[i] = 0.;
+          } else{
+          // position[i] = -1 + 2 * Math.random();
+          position[i] = 0.;
+          }
+        }
+        let velocity = new Float32Array(dim * nParticles);
+        for (let i = 0; i < nParticles * dim; i++) {
+            if(i%3 === 2){
+              velocity[i] = 0;
+            } else{
+            velocity[i] = -0.5 + Math.random();
+            }
+            }
+        let color = new Float32Array(dim*nParticles);
+        for (let i = 0; i < dim*nParticles; i++) {
+          // Make first half of particles blue and the second half red.
+          if(i < nParticles*dim/2){
+            if(i%3 === 2){
+              color[i] = 1;
+            } else{
+              color[i] = 0;
+            }
+          } 
+          else{
+            if(i%3 === 0){
+              color[i] = 1;
+            } else{
+              color[i] = 0;
+            }
+          }
+            }
+        // retrieve WebGL context
+        let canvas = document.getElementById("animation-canvas");
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        let gl = canvas.getContext("webgl2");
+        
+        // set up the texture
+        let image = document.getElementById("particle");
+        let texture = gl.createTexture();
+        gl.activeTexture(gl.TEXTURE0);
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 0);
+        gl.bindTexture(gl.TEXTURE_2D, texture);
+        const fmt = gl.RGBA;
+        gl.texImage2D(gl.TEXTURE_2D, 0, fmt, fmt, gl.UNSIGNED_BYTE, image);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+
+        // create vertex shader
+        const vertexShaderSource = `
+        attribute vec3 a_Position;
+        attribute vec3 a_Velocity;
+        attribute vec3 a_Color;
+
+        varying vec3 v_Position;
+        varying vec3 v_Velocity;
+        varying vec3 v_Color;
+
+        uniform mat4 u_ViewMatrix;
+        uniform mat4 u_ProjectionMatrix;
+        uniform vec3 u_MouseCoords;
+        uniform float u_Dragging;
+        uniform float u_Direction;
+
+        float deltaT = 5e-3;
+        float alpha = 1e-4;
+        // float alpha = 10.;
+
+        void main() {
+          // for rendering
+          gl_Position = u_ProjectionMatrix * u_ViewMatrix * vec4(a_Position, 1.0);
+          gl_PointSize = 20.0/gl_Position.w;
+          
+          
+          vec3 a = vec3(0.,0.,0.);
+          // PART 3: calculate v_Position
+          v_Velocity = a_Velocity + deltaT*a;
+          v_Position = a_Position + deltaT*v_Velocity;
+          v_Color = a_Color;
+
+          float bounds = 0.25;
+          if(v_Position.y < -bounds){
+            v_Velocity.y = -v_Velocity.y;
+          }
+          if(v_Position.y > bounds){
+            v_Velocity.y = -v_Velocity.y;
+          }
+          if(v_Position.x < -bounds){
+            v_Velocity.x = -v_Velocity.x;
+          }
+          if(v_Position.x > bounds){
+            v_Velocity.x = -v_Velocity.x;
+          }      
+            
+        }`;
+        let vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS))
+          throw "Error in vertex shader: " + gl.getShaderInfoLog(vertexShader);
+
+        // create fragment shader
+        const fragmentShaderSource = `
+        precision highp float;
+        uniform sampler2D tex_Sprite;
+        varying vec3 v_Color;
+
+        void main() {
+          // gl_FragColor = vec4(1, 0., 0., 1.);
+          gl_FragColor = vec4(v_Color,1) * texture2D(tex_Sprite, gl_PointCoord);
+        }`;
+        let fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, fragmentShaderSource);
+        gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS))
+          throw (
+            "Error in fragment shader: " + gl.getShaderInfoLog(fragmentShader)
+          );
+
+        // create shader program
+        let program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+
+        // PART 1: declare varyings to capture
+        let varyings = ["v_Position", "v_Velocity", "v_Color"];
+        gl.transformFeedbackVaryings(program, varyings, gl.SEPARATE_ATTRIBS);
+
+        // now link (and use the program) after specifying the varyings to capture
+        gl.linkProgram(program);
+        gl.useProgram(program);
+
+        // create buffers for initial data
+        let positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, position, gl.STATIC_DRAW);
+
+        // enable attributes
+        let a_Position = gl.getAttribLocation(program, "a_Position");
+        gl.enableVertexAttribArray(a_Position);
+
+        let a_Velocity = gl.getAttribLocation(program, "a_Velocity");
+        gl.enableVertexAttribArray(a_Velocity);
+
+        let a_Color = gl.getAttribLocation(program, "a_Color");
+        gl.enableVertexAttribArray(a_Color);
+
+        // setup view and write uniforms
+        const aspectRatio = canvas.width / canvas.height;
+        let projectionMatrix = mat4.create();
+        const fov = Math.PI / 4.0;
+        mat4.perspective(projectionMatrix, fov, aspectRatio, 1e-3, 1000);
+
+        const eye = vec3.fromValues(0, 0, 1);
+        const center = vec3.fromValues(0, 0, 0);
+        const up = vec3.fromValues(0, 1, 0);
+        const viewMatrix = mat4.lookAt(mat4.create(), eye, center, up);
+
+        let u_ProjectionMatrix = gl.getUniformLocation(
+          program,
+          "u_ProjectionMatrix"
+        );
+        let u_ViewMatrix = gl.getUniformLocation(program, "u_ViewMatrix");
+        gl.uniformMatrix4fv(u_ProjectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(u_ViewMatrix, false, viewMatrix);
+
+        let velocityBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, velocity, gl.STATIC_DRAW);
+
+        let colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, color, gl.STATIC_DRAW);
+
+        // PART 2
+        // create and allocate (but do not fill) buffers for transform feedback
+        // and create transform feedback object
+        let feedback = gl.createTransformFeedback();
+        let nextPositionBuffer = gl.createBuffer(); //hold p^{k + 1}
+        gl.bindBuffer(gl.ARRAY_BUFFER, nextPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, position.byteLength, gl.DYNAMIC_DRAW);
+        let nextVelocityBuffer = gl.createBuffer(); //hold p^{k + 1}
+        gl.bindBuffer(gl.ARRAY_BUFFER, nextVelocityBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, velocity.byteLength, gl.DYNAMIC_DRAW);
+        let nextColorBuffer = gl.createBuffer(); //hold p^{k + 1}
+        gl.bindBuffer(gl.ARRAY_BUFFER, nextColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, color.byteLength, gl.DYNAMIC_DRAW);
+        
+        // we can also use position.byteLength
+        // draw
+        const draw = () => {
+          gl.clearColor(0, 0, 0, 1);
+          gl.enable(gl.BLEND);
+          gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+          gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
+          gl.uniform1i(gl.getUniformLocation(program, "tex_Sprite"), 0);
+
+          // PART 4a: bind feedback buffers and start transform feedback
+          gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback);
+          gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0, nextPositionBuffer);
+          gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback);
+          gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 1, nextVelocityBuffer);
+          gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK, feedback);
+          gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 2, nextColorBuffer);
+          
+          // "0" corresponds to the index of the "v_Position" defined in "varyings" array above
+
+          
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, 0, 0);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
+          gl.vertexAttribPointer(a_Velocity, 3, gl.FLOAT, false, 0, 0);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+          gl.vertexAttribPointer(a_Color, 3, gl.FLOAT, false, 0, 0);
+          
+
+          gl.beginTransformFeedback(gl.POINTS);
+          gl.drawArrays(gl.POINTS, 0, nParticles);
+          gl.endTransformFeedback();
+          // PART 4b: end transform feedback, and swap buffers
+          [positionBuffer, nextPositionBuffer] = [nextPositionBuffer, positionBuffer];
+          [velocityBuffer, nextVelocityBuffer] = [nextVelocityBuffer, velocityBuffer];
+          [colorBuffer, nextColorBuffer] = [nextColorBuffer, colorBuffer];
+          // If necessary, swap velocity and nextvelocity
+          requestAnimationFrame(draw);
+        };
+        draw();
+         // Get pixel coordinates for location of mouse
+        const d = 1;
+        const h = 2.0 * d * Math.tan(0.5 * fov);
+        const w = aspectRatio * h;
+        const pixelCoords = (mouseX, mouseY) => {
+          // convert mouse coordinates to pixel location
+          const x = -w/2 + w*(mouseX + 0.5)/canvas.width;
+          const y = -h/2 + h*(canvas.height - 0.5 - mouseY)/canvas.height;
+          const z = -d;
+          let n = vec3.fromValues(0,0,1);
+          let direction = vec3.fromValues(x, y, z);
+          direction = vec3.normalize(direction, direction);
+          let ray = new Ray(eye, direction);
+          let t = vec3.dot(n, vec3.subtract(vec3.create(), center, eye))/vec3.dot(n, direction);
+          mouseCoords = ray.evaluate(t);
+          let u_mouseCoords = gl.getUniformLocation(program, "u_MouseCoords");
+          let u_Dragging = gl.getUniformLocation(program,"u_Dragging");
+          gl.uniform3fv(u_mouseCoords, mouseCoords);
+          gl.uniform1f(u_Dragging, dragging);
+
+        };
+
+        // Add mouse listener
+        let dragging = -1.;
+        let mouseX, mouseY;
+        let mouseCoords = vec3.fromValues(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+        canvas.addEventListener("mousedown", (event) => {
+          dragging = 1.;
+          let direction;
+          if(event.button !== 2){
+            direction = 1.;
+          } else{
+            direction = -1.;
+          }
+          let u_Direction = gl.getUniformLocation(program,"u_Direction");
+          gl.uniform1f(u_Direction, direction);
+          mouseX = event.offsetX;
+          mouseY = event.offsetY;
+          pixelCoords(mouseX, mouseY);
+        });
+
+        canvas.addEventListener("mouseup", () => {
+          dragging = -1.;
+          mouseCoords = vec3.fromValues(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+          let u_mouseCoords = gl.getUniformLocation(program, "u_MouseCoords");
+          let u_Dragging = gl.getUniformLocation(program,"u_Dragging");
+          gl.uniform3fv(u_mouseCoords, mouseCoords);
+          gl.uniform1f(u_Dragging, dragging);
+
+        });
+
+        canvas.addEventListener("mousemove", (event) => {
+          mouseX = event.pageX;
+          mouseY = event.pageY;
+          pixelCoords(mouseX, mouseY);
+        });
+      };
+    </script>
+  </body>
+</html>
