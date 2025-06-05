@@ -42,8 +42,8 @@
           if(i%3 === 2){
             position[i] = 0.;
           } else{
-          // position[i] = -1 + 2 * Math.random();
-          position[i] = 0.;
+          position[i] = -1 + 2 * Math.random();
+          // position[i] = 0.;
           }
         }
         let velocity = new Float32Array(dim * nParticles);
@@ -51,7 +51,7 @@
             if(i%3 === 2){
               velocity[i] = 0;
             } else{
-            velocity[i] = -0.5 + Math.random();
+            velocity[i] = (-0.5 + Math.random())/2;
             }
             }
         let color = new Float32Array(dim*nParticles);
@@ -112,28 +112,33 @@
         void main() {
           // for rendering
           gl_Position = u_ProjectionMatrix * u_ViewMatrix * vec4(a_Position, 1.0);
-          gl_PointSize = 20.0/gl_Position.w;
+          gl_PointSize = 25.0/gl_Position.w;
           
-          
-          vec3 a = vec3(0.,0.,0.);
+          // Calculate acceleration from harmonic oscillator trap
+          vec3 w = vec3(0.5, 1., 0.); // Oscillator frequencies
+
+          float q = 1.; // Charge of Rb87 atom
+          vec3 a = -q*a_Position*pow(w, vec3(2.));
+          // vec3 a = vec3(0.,0.,0.);
           // PART 3: calculate v_Position
           v_Velocity = a_Velocity + deltaT*a;
           v_Position = a_Position + deltaT*v_Velocity;
           v_Color = a_Color;
 
-          float bounds = 0.25;
-          if(v_Position.y < -bounds){
-            v_Velocity.y = -v_Velocity.y;
-          }
-          if(v_Position.y > bounds){
-            v_Velocity.y = -v_Velocity.y;
-          }
-          if(v_Position.x < -bounds){
-            v_Velocity.x = -v_Velocity.x;
-          }
-          if(v_Position.x > bounds){
-            v_Velocity.x = -v_Velocity.x;
-          }      
+          // Code for simulating particles in a box
+          // float bounds = 1.;
+          // if(v_Position.y < -bounds){
+          //   v_Velocity.y = -v_Velocity.y;
+          // }
+          // if(v_Position.y > bounds){
+          //   v_Velocity.y = -v_Velocity.y;
+          // }
+          // if(v_Position.x < -bounds){
+          //   v_Velocity.x = -v_Velocity.x;
+          // }
+          // if(v_Position.x > bounds){
+          //   v_Velocity.x = -v_Velocity.x;
+          // }      
             
         }`;
         let vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -194,7 +199,7 @@
         const fov = Math.PI / 4.0;
         mat4.perspective(projectionMatrix, fov, aspectRatio, 1e-3, 1000);
 
-        const eye = vec3.fromValues(0, 0, 1);
+        const eye = vec3.fromValues(0, 0, 3);
         const center = vec3.fromValues(0, 0, 0);
         const up = vec3.fromValues(0, 1, 0);
         const viewMatrix = mat4.lookAt(mat4.create(), eye, center, up);
