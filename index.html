@@ -36,7 +36,9 @@
       window.onload = () => {
         // create particles
         const dim = 3;
-        const nParticles = 50;
+        const nParticles = 1000;
+        const mass = 1.4431e-25; // Mass of rubidium 87 atom
+        const kb = 1.380649e-23 // Boltzmann constant
         let position = new Float32Array(dim * nParticles);
         for (let i = 0; i < nParticles * dim; i++) {
           if(i%3 === 2){
@@ -47,17 +49,28 @@
           }
         }
         let velocity = new Float32Array(dim * nParticles);
+        let velMag = [];
         for (let i = 0; i < nParticles * dim; i++) {
             if(i%3 === 2){
               velocity[i] = 0;
+              let mag = (velocity[i-2]**2 + velocity[i-1]**2 + velocity[i]**2)**0.5;
+              console.log(mag);
+              if(mag < 0.05){
+                velMag.push(0);
+              } else{
+                velMag.push(1);
+              }
             } else{
-            velocity[i] = (-0.5 + Math.random())/2;
+            velocity[i] = (-0.5 + Math.random())/10;
+            // velocity[i] = 0.;
             }
             }
+        let vsquare = velocity.reduce((sum, num) => sum + num**2, 0);
+        console.log("Temperature (K): " +  0.5*mass*vsquare/kb);
         let color = new Float32Array(dim*nParticles);
         for (let i = 0; i < dim*nParticles; i++) {
-          // Make first half of particles blue and the second half red.
-          if(i < nParticles*dim/2){
+          // Assign particles with high velocity to be red and low velocity to be blue
+          if(velMag[Math.floor(i/3)] === 0){
             if(i%3 === 2){
               color[i] = 1;
             } else{
@@ -115,15 +128,19 @@
           gl_PointSize = 25.0/gl_Position.w;
           
           // Calculate acceleration from harmonic oscillator trap
-          vec3 w = vec3(0.5, 1., 0.); // Oscillator frequencies
+          vec3 w = vec3(1); // Oscillator frequencies
 
-          float q = 1.; // Charge of Rb87 atom
-          vec3 a = -q*a_Position*pow(w, vec3(2.));
+          vec3 a = -a_Position*pow(w, vec3(2.));
           // vec3 a = vec3(0.,0.,0.);
           // PART 3: calculate v_Position
           v_Velocity = a_Velocity + deltaT*a;
           v_Position = a_Position + deltaT*v_Velocity;
-          v_Color = a_Color;
+          if(length(v_Velocity) < 0.25){
+            v_Color = vec3(0., 0., 1.);
+          } else{
+            v_Color = vec3(1., 0., 0.);  
+          }
+          // v_Color = a_Color;
 
           // Code for simulating particles in a box
           // float bounds = 1.;
@@ -182,6 +199,14 @@
         let positionBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, position, gl.STATIC_DRAW);
+ 
+        let velocityBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, velocity, gl.STATIC_DRAW);
+
+        let colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, color, gl.STATIC_DRAW);
 
         // enable attributes
         let a_Position = gl.getAttribLocation(program, "a_Position");
@@ -211,14 +236,6 @@
         let u_ViewMatrix = gl.getUniformLocation(program, "u_ViewMatrix");
         gl.uniformMatrix4fv(u_ProjectionMatrix, false, projectionMatrix);
         gl.uniformMatrix4fv(u_ViewMatrix, false, viewMatrix);
-
-        let velocityBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, velocity, gl.STATIC_DRAW);
-
-        let colorBuffer = gl.createBuffer();
-        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
-        gl.bufferData(gl.ARRAY_BUFFER, color, gl.STATIC_DRAW);
 
         // PART 2
         // create and allocate (but do not fill) buffers for transform feedback
@@ -252,12 +269,43 @@
           gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 2, nextColorBuffer);
           
           // "0" corresponds to the index of the "v_Position" defined in "varyings" array above
-
           
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          const pos_buffer = new Float32Array(nParticles*3);
+          gl.getBufferSubData(gl.ARRAY_BUFFER, 0, pos_buffer);
+          // console.log(pos_buffer);
+
+          gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
+          const vel_buffer = new Float32Array(nParticles*3);
+          gl.getBufferSubData(gl.ARRAY_BUFFER, 0, vel_buffer);
+
+          const flips = new Float32Array(nParticles);
+          for(let i = 0; i < nParticles; i++){
+            for(let j = i + 1; j < nParticles; j++){
+                part1 = vec3.fromValues(pos_buffer[3*i], pos_buffer[3*i + 1], pos_buffer[3*i + 2]);
+                part2 = vec3.fromValues(pos_buffer[3*j], pos_buffer[3*j + 1], pos_buffer[3*j + 2]);
+                const dist = vec3.distance(part1, part2);
+                if(dist < 0.015){
+                  // Using flip array ensures velocities don't flip twice in case of triple collision
+                  flips[i] = 1.;
+                  flips[j] = 1.;
+                }   
+            }
+          }
+
+          for(let i = 0; i < nParticles; i++){
+            if(flips[i] === 1.){
+              vel_buffer[3*i] = -vel_buffer[3*i];
+              vel_buffer[3*i + 1] = -vel_buffer[3*i + 1];
+              vel_buffer[3*i + 2] = -vel_buffer[3*i + 2];
+            }
+          }
+
           gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
           gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, 0, 0);
 
           gl.bindBuffer(gl.ARRAY_BUFFER, velocityBuffer);
+          gl.bufferData(gl.ARRAY_BUFFER, vel_buffer, gl.STATIC_DRAW);
           gl.vertexAttribPointer(a_Velocity, 3, gl.FLOAT, false, 0, 0);
 
           gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
