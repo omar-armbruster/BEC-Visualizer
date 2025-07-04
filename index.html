@@ -9,7 +9,16 @@
 
   <body>
     <div style="width: 100%; position: relative">
+       <center>
+        <label for="xfreq">wx (Hz)</label>
+        <input type = "number" id="xfreq" name="xfreq" min="0" value="1"/>
+        <label for="yfreq">wy (Hz)</label>
+        <input type = "number" id="yfreq" name="yfreq" min="0" value="1"/>
+        <label for="yfreq">wz (Hz)</label>
+        <input type = "number" id="zfreq" name="zfreq" min="0" value="0"/>
+        <br />
       <canvas id="animation-canvas" style="width: inherit"></canvas>
+      </center>
     </div>
     <img id="particle" src="particle.png" hidden />
     <script type="text/javascript">
@@ -44,7 +53,7 @@
           if(i%3 === 2){
             position[i] = 0.;
           } else{
-          position[i] = -1 + 2 * Math.random();
+          position[i] = (-1 + 2 * Math.random())/2;
           // position[i] = 0.;
           }
         }
@@ -102,6 +111,12 @@
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
 
+        // setup trapping frequency
+        const freqx = document.getElementById("xfreq");
+        const freqy = document.getElementById("yfreq");
+        const freqz = document.getElementById("zfreq");
+
+
         // create vertex shader
         const vertexShaderSource = `
         attribute vec3 a_Position;
@@ -117,6 +132,7 @@
         uniform vec3 u_MouseCoords;
         uniform float u_Dragging;
         uniform float u_Direction;
+        uniform vec3 u_W;
 
         float deltaT = 5e-3;
         float alpha = 1e-4;
@@ -128,19 +144,19 @@
           gl_PointSize = 25.0/gl_Position.w;
           
           // Calculate acceleration from harmonic oscillator trap
-          vec3 w = vec3(1); // Oscillator frequencies
-
+          // vec3 w = vec3(4); // Oscillator frequencies
+          vec3 w = u_W;
           vec3 a = -a_Position*pow(w, vec3(2.));
           // vec3 a = vec3(0.,0.,0.);
           // PART 3: calculate v_Position
           v_Velocity = a_Velocity + deltaT*a;
           v_Position = a_Position + deltaT*v_Velocity;
-          if(length(v_Velocity) < 0.25){
-            v_Color = vec3(0., 0., 1.);
-          } else{
-            v_Color = vec3(1., 0., 0.);  
-          }
-          // v_Color = a_Color;
+          // if(length(v_Velocity) < 0.25){
+          //   v_Color = vec3(0., 0., 1.);
+          // } else{
+          //   v_Color = vec3(1., 0., 0.);  
+          // }
+          v_Color = a_Color;
 
           // Code for simulating particles in a box
           // float bounds = 1.;
@@ -237,6 +253,10 @@
         gl.uniformMatrix4fv(u_ProjectionMatrix, false, projectionMatrix);
         gl.uniformMatrix4fv(u_ViewMatrix, false, viewMatrix);
 
+        // trapping frequency
+        let u_W = gl.getUniformLocation(program, "u_W");
+        gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
+        
         // PART 2
         // create and allocate (but do not fill) buffers for transform feedback
         // and create transform feedback object
@@ -287,19 +307,22 @@
                 const dist = vec3.distance(part1, part2);
                 if(dist < 0.015){
                   // Using flip array ensures velocities don't flip twice in case of triple collision
-                  flips[i] = 1.;
-                  flips[j] = 1.;
+                  // flips[i] = 1.;
+                  // flips[j] = 1.;
+                  vel_buffer[3*i], vel_buffer[3*j] = -vel_buffer[3*j], -vel_buffer[3*i];
+                  vel_buffer[3*i + 1],  vel_buffer[3*j + 1] = -vel_buffer[3*j + 1], -vel_buffer[3*i + 1];
+                  vel_buffer[3*i + 2],  vel_buffer[3*j + 2] = -vel_buffer[3*j + 2], -vel_buffer[3*i + 2];    
                 }   
             }
           }
 
-          for(let i = 0; i < nParticles; i++){
-            if(flips[i] === 1.){
-              vel_buffer[3*i] = -vel_buffer[3*i];
-              vel_buffer[3*i + 1] = -vel_buffer[3*i + 1];
-              vel_buffer[3*i + 2] = -vel_buffer[3*i + 2];
-            }
-          }
+          // for(let i = 0; i < nParticles; i++){
+          //   if(flips[i] === 1.){
+          //     vel_buffer[3*i] = -vel_buffer[3*i];
+          //     vel_buffer[3*i + 1] = -vel_buffer[3*i + 1];
+          //     vel_buffer[3*i + 2] = -vel_buffer[3*i + 2];
+          //   }
+          // }
 
           gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
           gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, 0, 0);
@@ -327,6 +350,7 @@
         const d = 1;
         const h = 2.0 * d * Math.tan(0.5 * fov);
         const w = aspectRatio * h;
+        
         const pixelCoords = (mouseX, mouseY) => {
           // convert mouse coordinates to pixel location
           const x = -w/2 + w*(mouseX + 0.5)/canvas.width;
@@ -379,7 +403,22 @@
           mouseY = event.pageY;
           pixelCoords(mouseX, mouseY);
         });
+        
+        // Add trapping frequency listener 
+        freqx.addEventListener("change", () => {
+          let u_W = gl.getUniformLocation(program, "u_W");
+          gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
+        });
+        freqy.addEventListener("change", () => {
+          let u_W = gl.getUniformLocation(program, "u_W");
+          gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
+        });
+        freqz.addEventListener("change", () => {
+          let u_W = gl.getUniformLocation(program, "u_W");
+          gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
+        });
       };
+    
     </script>
   </body>
 </html>
