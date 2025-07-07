@@ -16,6 +16,8 @@
         <input type = "number" id="yfreq" name="yfreq" min="0" value="1"/>
         <label for="yfreq">wz (Hz)</label>
         <input type = "number" id="zfreq" name="zfreq" min="0" value="0"/>
+        <label for = "cooling">Laser cooling</label>
+        <input type = "checkbox" id = "cooling" name="cooling">
         <br />
       <canvas id="animation-canvas" style="width: inherit"></canvas>
       </center>
@@ -57,6 +59,12 @@
           // position[i] = 0.;
           }
         }
+        // position[0] = -0.5;
+        // position[1] = 0;
+        // position[2] = 0;
+        // position[3] = 0.5;
+        // position[4] = 0;
+        // position[5] = 0;
         let velocity = new Float32Array(dim * nParticles);
         let velMag = [];
         for (let i = 0; i < nParticles * dim; i++) {
@@ -77,6 +85,8 @@
         let vsquare = velocity.reduce((sum, num) => sum + num**2, 0);
         console.log("Temperature (K): " +  0.5*mass*vsquare/kb);
         let color = new Float32Array(dim*nParticles);
+        // color[0] = 1;
+        // color[5] = 1;
         for (let i = 0; i < dim*nParticles; i++) {
           // Assign particles with high velocity to be red and low velocity to be blue
           if(velMag[Math.floor(i/3)] === 0){
@@ -116,6 +126,9 @@
         const freqy = document.getElementById("yfreq");
         const freqz = document.getElementById("zfreq");
 
+        // laser cooling check
+        const lasercool = document.getElementById("cooling");
+        console.log(lasercool.value);
 
         // create vertex shader
         const vertexShaderSource = `
@@ -144,7 +157,6 @@
           gl_PointSize = 25.0/gl_Position.w;
           
           // Calculate acceleration from harmonic oscillator trap
-          // vec3 w = vec3(4); // Oscillator frequencies
           vec3 w = u_W;
           vec3 a = -a_Position*pow(w, vec3(2.));
           // vec3 a = vec3(0.,0.,0.);
@@ -256,7 +268,7 @@
         // trapping frequency
         let u_W = gl.getUniformLocation(program, "u_W");
         gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
-        
+
         // PART 2
         // create and allocate (but do not fill) buffers for transform feedback
         // and create transform feedback object
@@ -271,6 +283,19 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, nextColorBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, color.byteLength, gl.DYNAMIC_DRAW);
         
+
+        const newv = (p1, p2, v1, v2) => {
+            // Calculates velocity of particle 1 after a collision with particle 2
+            // p1, p2: Position of particles 1 and 2 (vec3)
+            // v1, v2: Velocity of particles 1 and 2 (vec3)
+            const diffv = vec3.subtract(vec3.create(), v1, v2);
+            const diffp = vec3.subtract(vec3.create(), p1, p2);
+            const diffpdotv = vec3.dot(diffv, diffp);
+            const diffpmag = vec3.squaredLength(diffp);
+            const secterm = vec3.scale(vec3.create(), diffp, diffpdotv/diffpmag);
+            return vec3.subtract(vec3.create(), v1, secterm);
+          };
+
         // we can also use position.byteLength
         // draw
         const draw = () => {
@@ -299,30 +324,23 @@
           const vel_buffer = new Float32Array(nParticles*3);
           gl.getBufferSubData(gl.ARRAY_BUFFER, 0, vel_buffer);
 
-          const flips = new Float32Array(nParticles);
           for(let i = 0; i < nParticles; i++){
             for(let j = i + 1; j < nParticles; j++){
-                part1 = vec3.fromValues(pos_buffer[3*i], pos_buffer[3*i + 1], pos_buffer[3*i + 2]);
-                part2 = vec3.fromValues(pos_buffer[3*j], pos_buffer[3*j + 1], pos_buffer[3*j + 2]);
+                const part1 = vec3.fromValues(pos_buffer[3*i], pos_buffer[3*i + 1], pos_buffer[3*i + 2]);
+                const part2 = vec3.fromValues(pos_buffer[3*j], pos_buffer[3*j + 1], pos_buffer[3*j + 2]);
                 const dist = vec3.distance(part1, part2);
                 if(dist < 0.015){
-                  // Using flip array ensures velocities don't flip twice in case of triple collision
-                  // flips[i] = 1.;
-                  // flips[j] = 1.;
-                  vel_buffer[3*i], vel_buffer[3*j] = -vel_buffer[3*j], -vel_buffer[3*i];
-                  vel_buffer[3*i + 1],  vel_buffer[3*j + 1] = -vel_buffer[3*j + 1], -vel_buffer[3*i + 1];
-                  vel_buffer[3*i + 2],  vel_buffer[3*j + 2] = -vel_buffer[3*j + 2], -vel_buffer[3*i + 2];    
+                  const v1 = vec3.fromValues(vel_buffer[3*i], vel_buffer[3*i + 1], vel_buffer[3*i + 2]);
+                  const v2 = vec3.fromValues(vel_buffer[3*j], vel_buffer[3*j + 1], vel_buffer[3*j + 2]);
+                  const newv1 = newv(part1, part2, v1, v2);
+                  const newv2 = newv(part2, part1, v2, v1);
+                  for(let k = 0; k < 3; k++){
+                    vel_buffer[3*i + k] = newv1[k];
+                    vel_buffer[3*j + k] = newv2[k];
+                  } 
                 }   
             }
           }
-
-          // for(let i = 0; i < nParticles; i++){
-          //   if(flips[i] === 1.){
-          //     vel_buffer[3*i] = -vel_buffer[3*i];
-          //     vel_buffer[3*i + 1] = -vel_buffer[3*i + 1];
-          //     vel_buffer[3*i + 2] = -vel_buffer[3*i + 2];
-          //   }
-          // }
 
           gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
           gl.vertexAttribPointer(a_Position, 3, gl.FLOAT, false, 0, 0);
@@ -418,7 +436,7 @@
           gl.uniform3fv(u_W, vec3.fromValues(freqx.value, freqy.value, freqz.value));
         });
       };
-    
+
     </script>
   </body>
 </html>
